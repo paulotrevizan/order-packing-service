@@ -1,0 +1,84 @@
+spring:
+  application:
+    name: order-packing-service
+  threads:
+    virtual:
+      enabled: true
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+  datasource:
+    hikari:
+      data-source-properties:
+        # the driver sends a batch of inserts as one multi-row statement.
+        reWriteBatchedInserts: true
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 64
+  kafka:
+    consumer:
+      group-id: order-packing-service
+      # a new consumer group starts from the beginning, so no message is skipped.
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      # a record that cannot be deserialized reaches the error handler instead of
+      # failing the poll loop and is logged and skipped.
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JacksonJsonDeserializer
+        spring.json.value.default.type: pt.paulotrevizan.orderpacking.inbox.messaging.PickingEvent
+        spring.json.use.type.headers: false
+    listener:
+      # the offset is acknowledged only after the inbox transaction commits.
+      ack-mode: manual_immediate
+      concurrency: 3
+  http:
+    clients:
+      connect-timeout: 2s
+      read-timeout: 5s
+    serviceclient:
+      carrier:
+        base-url: ${CARRIER_BASE_URL}
+
+order-packing:
+  kafka:
+    topic: order-picking-events
+  packing:
+    poll-interval: 2s
+    batch-size: 20
+    # fails on the 10th check / ~5 min.
+    initial-backoff: 2s
+    max-backoff: 60s
+    jitter: 0.2
+    max-attempts: 10
+    # far above the carrier read timeout, so a call still in flight is never failed.
+    label-timeout: 5m
+
+server:
+  shutdown: graceful
+
+logging:
+  level:
+    # Hibernate logs every SQL error at WARN, including the unique violations that means
+    # "duplicate", which are expected. other violations are re-thrown.
+    org.hibernate.orm.jdbc.error: error
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        # not ready without the database: nothing can be stored or reconciled.
+        # liveness stays independent, so a database outage never restarts the pods.
+        readiness:
+          include: readinessState, db

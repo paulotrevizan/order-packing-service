@@ -1,0 +1,18 @@
+# local defaults for docker-compose.yml.
+# never used outside a developer machine.
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/order_packing
+    username: order_packing
+    password: order_packing
+  kafka:
+    bootstrap-servers: localhost:9092
+  http:
+    serviceclient:
+      carrier:
+        base-url: http://localhost:8089
+
+order-packing:
+  packing:
+    # 5 checks (~30s of waiting) instead of 10 (~5 min), so the missing-row demo fails quickly.
+    max-attempts: 5

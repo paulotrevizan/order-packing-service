@@ -1,0 +1,20 @@
+# PostgreSQL and Kafka connections come from Testcontainers (@ServiceConnection), and the carrier
+# base URL points at WireMock (CarrierTestConfiguration).
+# Short intervals so scenarios finish in seconds; an incomplete order fails after ~5s.
+spring:
+  http:
+    clients:
+      connect-timeout: 500ms
+      read-timeout: 500ms
+
+order-packing:
+  packing:
+    poll-interval: 200ms
+    initial-backoff: 200ms
+    max-backoff: 1s
+    max-attempts: 8
+    label-timeout: 2s
+
+logging:
+  level:
+    pt.paulotrevizan.orderpacking: DEBUG

@@ -1,0 +1,45 @@
+# local stack to run for "local" profile (application-local.yaml):
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: order_packing
+      POSTGRES_USER: order_packing
+      POSTGRES_PASSWORD: order_packing
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U order_packing -d order_packing"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  kafka:
+    image: apache/kafka:4.3.1
+    ports:
+      - "9092:9092"
+
+  kafka-topics:
+    image: apache/kafka:4.3.1
+    network_mode: "service:kafka"
+    depends_on:
+      - kafka
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list > /dev/null 2>&1; do sleep 1; done
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic order-picking-events --partitions 10
+
+  # requests received in: http://localhost:8089/__admin/requests
+  carrier:
+    image: wiremock/wiremock:3.13.2
+    ports:
+      - "8089:8080"
+    volumes:
+      - ./docker/wiremock:/home/wiremock
+    command: ["--disable-banner"]
+
+volumes:
+  postgres-data:

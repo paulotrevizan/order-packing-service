@@ -1,0 +1,14 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "/labels"
+  },
+  "response": {
+    "status": 201,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": "{\"labelId\": \"LBL-{{randomValue length=8 type='ALPHANUMERIC' uppercase=true}}\"}",
+    "transformers": ["response-template"]
+  }
+}

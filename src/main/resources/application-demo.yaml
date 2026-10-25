@@ -1,0 +1,14 @@
+# profile "demo" (with "local"): publishes the demo scenarios and exits.
+# it only produces records:
+# no web server, no listener and no scheduled jobs (SchedulingConfiguration is off in this profile).
+spring:
+  main:
+    web-application-type: none
+  kafka:
+    listener:
+      auto-startup: false
+    producer:
+      # the demo publishes PickingEvent records as plain JSON, as the real producer does.
+      value-serializer: org.springframework.kafka.support.serializer.JacksonJsonSerializer
+      properties:
+        spring.json.add.type.headers: false
