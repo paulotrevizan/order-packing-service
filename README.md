@@ -52,8 +52,9 @@ flowchart TB
    2. Unique constraints protect the flow from a redelivery or a duplicated (re-sent). 
    3. The offset is acknowledged only after the commit.
 2. **Reconcile** 
-   1. Every pod claims due "order completed" records with `FOR UPDATE SKIP LOCKED`, one
-      order per short transaction. 
+   1. Every pod runs 5 parallel workers that claim due "order completed" records with
+      `FOR UPDATE SKIP LOCKED`, one order per short transaction, so carrier calls run in parallel
+      and no two workers ever take the same order. 
    2. Complete (rows exactly `1..4`): store the order and its items, mark it as `LABEL_REQUESTED`. 
    3. Incomplete rows: wait with exponential backoff. After 10 checks, it is marked `FAILED` (`MISSING_ROWS`).
 3. **Label** 
@@ -137,6 +138,7 @@ Connections and secrets are coming from environment variables and local values l
 | Topic                                 | `order-picking-events`                              | `ORDER_PACKING_KAFKA_TOPIC`                                                         |
 | Consumer group / listener concurrency | `order-packing-service` / 3                         | `SPRING_KAFKA_CONSUMER_GROUP_ID`, `SPRING_KAFKA_LISTENER_CONCURRENCY`               |
 | Reconciler poll / batch size          | 2s / 20                                             | `ORDER_PACKING_PACKING_POLL_INTERVAL`, `ORDER_PACKING_PACKING_BATCH_SIZE`           |
+| Reconciler workers / database pool    | 5 per pod / 10 connections                          | `ORDER_PACKING_PACKING_WORKERS`, `SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE`       |
 | Backoff                               | 2s * 2, capped at 60s, +-20%                        | `ORDER_PACKING_PACKING_INITIAL_BACKOFF`, `_MAX_BACKOFF`, `_JITTER`                  |
 | Max attempts                          | 10 (~5 min)                                         | `ORDER_PACKING_PACKING_MAX_ATTEMPTS`                                                |
 | Label timeout (pod died during call)  | 5 min                                               | `ORDER_PACKING_PACKING_LABEL_TIMEOUT`                                               |

@@ -23,7 +23,10 @@ import pt.paulotrevizan.orderpacking.support.IntegrationTest;
 import pt.paulotrevizan.orderpacking.support.KafkaTestClient;
 import pt.paulotrevizan.orderpacking.support.ScenarioDatabase;
 
-/** Several pods reconciling at once (NFR6): each worker stands in for a pod's reconciler. */
+/**
+ * Several pods reconciling at once (NFR6): each thread stands in for a pod's reconciler, which runs
+ * its own parallel workers.
+ */
 @IntegrationTest
 class ConcurrentReconcilersTests {
 
@@ -41,7 +44,7 @@ class ConcurrentReconcilersTests {
 
   @Test
   @DisplayName(
-      "I2, D-003: reconcilers racing for 50 orders that complete at once call the carrier once per order")
+      "I2, D-003: reconcilers and their workers racing for 50 orders call the carrier once per order")
   void shouldCallCarrierOncePerOrderWhenReconcilersRunConcurrently() throws Exception {
     var orderIds = IntStream.range(0, ORDERS).mapToObj(order -> newOrderId()).toList();
     storeAllRows(orderIds);

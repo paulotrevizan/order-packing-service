@@ -51,6 +51,9 @@ order-packing:
   packing:
     poll-interval: 2s
     batch-size: 20
+    # parallel carrier calls per pod (D-003), each one handles up to batch-size messages per cycle.
+    # with the 3 listener threads they fit the default pool of 10 connections.
+    workers: 5
     # fails on the 10th check / ~5 min.
     initial-backoff: 2s
     max-backoff: 60s

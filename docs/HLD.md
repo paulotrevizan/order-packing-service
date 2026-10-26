@@ -21,53 +21,53 @@ shipment.
 These are the properties the solution must **never** violate. Every design choice below exists
 to protect one of them.
 
-| #      | Invariant                                                                                            | Enforced by                                                                                                                                 |
-|--------|------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------|
+| #      | Invariant                                                                                         | Enforced by                                                                                                                                 |
+|--------|---------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------|
 | **I1** | An order is never marked packed, and the carrier is never called, before its 4 rows are persisted | Completeness check by the reconciler, in the same transaction that moves the order to `LABEL_REQUESTED` (D-002, D-004)                      |
-| **I2** | The external carrier service is never called twice for the same order                                | State committed before the call + `SKIP LOCKED` claims. An unknown outcome goes to manual check, never to an automatic retry (D-003, D-005) |
-| **I3** | A message is never processed twice                                                                   | Unique constraints on the inbox table: `event_id`, `(order_id, row_number)`, one `ORDER_COMPLETED` per order (D-001, D-004)                  |
-| **I4** | A message is never lost                                                                              | Kafka offset acknowledged only after the inbox commit (D-009)                                                                               |
-| **I5** | An order is never stuck silently                                                                     | Every order ends `PROCESSED` or `FAILED` + alert. Max attempts bound the wait; a carrier outage retries unbounded, visibly (D-006, D-007)   |
+| **I2** | The external carrier service is never called twice for the same order                             | State committed before the call + `SKIP LOCKED` claims. An unknown outcome goes to manual check, never to an automatic retry (D-003, D-005) |
+| **I3** | A message is never processed twice                                                                | Unique constraints on the inbox table: `event_id`, `(order_id, row_number)`, one `ORDER_COMPLETED` per order (D-001, D-004)                 |
+| **I4** | A message is never lost                                                                           | Kafka offset acknowledged only after the inbox commit (D-009)                                                                               |
+| **I5** | An order is never stuck silently                                                                  | Every order ends `PROCESSED` or `FAILED` + alert. Max attempts bound the wait; a carrier outage retries unbounded, visibly (D-006, D-007)   |
 
 > I1 and I3 come from the database, not from arrival order: it does not matter which partition
 > or pod delivers what, or how many times.
 
 ## 3. Constraints and assumptions
 
-| #  | Constraint or assumption                                                                                  | Why it holds                                                                            |
-|----|-----------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------|
+| #  | Constraint or assumption                                                                              | Why it holds                                                                            |
+|----|-------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------|
 | A1 | Every row message carries `orderId` and a `rowNumber` (1–4). "Order completed" carries `expectedRows` | Without it, "complete" cannot be defined                                                |
-| A2 | A redelivered message keeps its `eventId`                                                                 | Standard for Kafka producers. It is what makes the inbox dedup work                     |
-| A3 | The external carrier service has no idempotency key and no lookup endpoint: we can only send events       | It is the real constraint. An unknown outcome is resolved by a human (D-005)            |
-| A4 | A delay of seconds between "order completed" and the label is acceptable                                     | Dispatch is not real-time. It is what lets the reconciler poll                          |
-| A5 | The producer's partitioning is not ours to change                                                         | Re-keying by `orderId` would fix ordering at the source, but it belongs to another team |
-| A6 | The original system replays failed orders through its own DLQ path, owned elsewhere                       | Out of scope here (§10, D-015)                                                          |
+| A2 | A redelivered message keeps its `eventId`                                                             | Standard for Kafka producers. It is what makes the inbox dedup work                     |
+| A3 | The external carrier service has no idempotency key and no lookup endpoint: we can only send events   | It is the real constraint. An unknown outcome is resolved by a human (D-005)            |
+| A4 | A delay of seconds between "order completed" and the label is acceptable                              | Dispatch is not real-time. It is what lets the reconciler poll                          |
+| A5 | The producer's partitioning is not ours to change                                                     | Re-keying by `orderId` would fix ordering at the source, but it belongs to another team |
+| A6 | The original system replays failed orders through its own DLQ path, owned elsewhere                   | Out of scope here (§10, D-015)                                                          |
 
 ## 4. Requirements
 
 ### Functional
 
-| #   | Requirement                                                                                                       |
-|-----|-------------------------------------------------------------------------------------------------------------------|
-| FR1 | Consume row-completed and order-completed messages from Kafka                                                         |
-| FR2 | Persist each order with its 4 rows and 64 items                                                                |
-| FR3 | Once an order is complete and "order completed" has arrived, create exactly one shipping label at the carrier        |
-| FR4 | Release the order for dispatch only after its label exists (FR3); here it ends `PROCESSED` with its label (§10)   |
-| FR5 | Surface orders that never complete (`FAILED` + alert)                                                             |
+| #   | Requirement                                                                                                     |
+|-----|-----------------------------------------------------------------------------------------------------------------|
+| FR1 | Consume row-completed and order-completed messages from Kafka                                                   |
+| FR2 | Persist each order with its 4 rows and 64 items                                                                 |
+| FR3 | Once an order is complete and "order completed" has arrived, create exactly one shipping label at the carrier   |
+| FR4 | Release the order for dispatch only after its label exists (FR3); here it ends `PROCESSED` with its label (§10) |
+| FR5 | Surface orders that never complete (`FAILED` + alert)                                                           |
 
 ### Non-functional
 
-| #    | Requirement   | Number / constraint                                                                                                          |
-|------|---------------|------------------------------------------------------------------------------------------------------------------------------|
-| NFR1 | Volume        | ~41M/month, ~16 msg/s average                                                                                                |
-| NFR2 | Peaks         | Load concentrates in peak hours, the peak factor is not measured. Even 10x (~160 msg/s) is a light write load for PostgreSQL |
-| NFR3 | Ordering      | None across the messages of one order                                                                                        |
-| NFR4 | Delivery      | At-least-once: redeliveries on rebalance are expected                                                                        |
-| NFR5 | Idempotency   | The external carrier service is never called twice for the same order                                                         |
-| NFR6 | Scaling       | Up to 3 pods on 10 partitions. Adding pods must not break NFR5                                                               |
-| NFR7 | Latency       | Seconds between "order completed" and the label are acceptable                                                                  |
-| NFR8 | Storage       | ~41M inbox rows/month: retention is required (extension point, §10)                                                          |
-| NFR9 | Observability | Every failed order alerts; inbox backlog is a metric                                                                         |
+| #    | Requirement   | Number / constraint                                                                                                                                                                                      |
+|------|---------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| NFR1 | Volume        | ~41M/month, ~16 msg/s average                                                                                                                                                                            |
+| NFR2 | Peaks         | Load concentrates in peak hours, the peak factor is not measured. Even 10x (~160 msg/s, ~32 orders/s) is a light write load for PostgreSQL; the carrier calls run in parallel workers to keep up (D-003) |
+| NFR3 | Ordering      | None across the messages of one order                                                                                                                                                                    |
+| NFR4 | Delivery      | At-least-once: redeliveries on rebalance are expected                                                                                                                                                    |
+| NFR5 | Idempotency   | The external carrier service is never called twice for the same order                                                                                                                                    |
+| NFR6 | Scaling       | Up to 3 pods on 10 partitions. Adding pods must not break NFR5                                                                                                                                           |
+| NFR7 | Latency       | Seconds between "order completed" and the label are acceptable                                                                                                                                           |
+| NFR8 | Storage       | ~41M inbox rows/month: retention is required (extension point, §10)                                                                                                                                      |
+| NFR9 | Observability | Every failed order alerts; inbox backlog is a metric                                                                                                                                                     |
 
 ## 5. Architecture
 
@@ -82,13 +82,13 @@ flowchart LR
 
 ### Components
 
-| Component              | Responsibility                                                                                                                                                                |
-|------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `PickingEventListener` | Deserializes a record, calls `InboxWriter`, acknowledges after commit. Invalid records are logged, counted and skipped (D-008)                                                |
-| `InboxWriter`          | Inserts the message. A unique violation on an inbox constraint = duplicate, ignored (I3)                                                                                      |
-| `PackingReconciler`    | Scheduled on every pod: claims due `ORDER_COMPLETED` records, checks completeness, completes or reschedules or fails them. Fails label requests abandoned by a crashed pod (6.4) |
-| `LabelRequester`       | Calls the carrier for orders this instance moved to `LABEL_REQUESTED`, outside any transaction                                                                                |
-| `CarrierClient`        | Declarative HTTP client for the carrier (`@PostExchange`), bounded timeouts                                                                                                   |
+| Component              | Responsibility                                                                                                                                                                                                  |
+|------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `PickingEventListener` | Deserializes a record, calls `InboxWriter`, acknowledges after commit. Invalid records are logged, counted and skipped (D-008)                                                                                  |
+| `InboxWriter`          | Inserts the message. A unique violation on an inbox constraint = duplicate, ignored (I3)                                                                                                                        |
+| `PackingReconciler`    | Scheduled on every pod, with parallel workers (D-003): claims due `ORDER_COMPLETED` records, checks completeness, completes or reschedules or fails them. Fails label requests abandoned by a crashed pod (6.4) |
+| `LabelRequester`       | Calls the carrier for orders this instance moved to `LABEL_REQUESTED`, outside any transaction                                                                                                                  |
+| `CarrierClient`        | Declarative HTTP client for the carrier (`@PostExchange`), bounded timeouts                                                                                                                                     |
 
 ## 6. Flows
 
@@ -103,8 +103,9 @@ flowchart LR
 
 ### 6.2 Reconcile (scheduled, every pod)
 
-Each cycle handles up to `batch-size` orders, **one short transaction per order** (D-003), so one
-order never holds back or rolls back another:
+Each cycle runs `workers` parallel workers, each handling up to `batch-size` orders,
+**one short transaction per order** (D-003), so one order never holds back or rolls back another.
+`SKIP LOCKED` keeps any two workers, on the same pod or not, off the same order. Each worker:
 
 1. Claim the next due `ORDER_COMPLETED` record (status `RECEIVED`/`WAITING`,
    `next_attempt_at <= now`, oldest first), `FOR UPDATE SKIP LOCKED`.
@@ -117,16 +118,17 @@ order never holds back or rolls back another:
    and count it: the alert (D-007).
 6. Commit. If the order moved to `LABEL_REQUESTED`, run 6.3 for it now, outside the transaction.
 
-An error (for example the database is down) stops the cycle; the next poll resumes it.
+An error (for example the database is down) stops that worker; the cycle waits for the others and the
+next poll resumes the work.
 
 ### 6.3 Create the label (outside any transaction, D-005)
 
-| Carrier outcome                                 | Meaning                              | Next state                                                                                                    |
-|-------------------------------------------------|--------------------------------------|---------------------------------------------------------------------------------------------------------------|
-| `201` + `labelId`                               | Label created                        | `PROCESSED`; `packed_order.carrier_label_id` set; the order's `ROW_COMPLETED` records → `PROCESSED`            |
-| Connection refused or connect timeout, or `429` | Request never sent, or not processed | `WAITING` with backoff; retried for as long as the carrier is unavailable (D-006)                             |
-| `4xx`                                           | Carrier rejected the order           | `FAILED`, reason `CARRIER_REJECTED`                                                                           |
-| Read timeout, `5xx`, other I/O error            | Unknown: the label may exist         | `FAILED`, reason `LABEL_OUTCOME_UNKNOWN`: a person checks the carrier; never called again automatically       |
+| Carrier outcome                                 | Meaning                              | Next state                                                                                              |
+|-------------------------------------------------|--------------------------------------|---------------------------------------------------------------------------------------------------------|
+| `201` + `labelId`                               | Label created                        | `PROCESSED`; `packed_order.carrier_label_id` set; the order's `ROW_COMPLETED` records → `PROCESSED`     |
+| Connection refused or connect timeout, or `429` | Request never sent, or not processed | `WAITING` with backoff; retried for as long as the carrier is unavailable (D-006)                       |
+| `4xx`                                           | Carrier rejected the order           | `FAILED`, reason `CARRIER_REJECTED`                                                                     |
+| Read timeout, `5xx`, other I/O error            | Unknown: the label may exist         | `FAILED`, reason `LABEL_OUTCOME_UNKNOWN`: a person checks the carrier; never called again automatically |
 
 `ROW_COMPLETED` records only go `RECEIVED → PROCESSED` (when their order is processed).
 
@@ -251,6 +253,7 @@ packed_order_item (
 | Listener concurrency per pod                | 3                                                                   |
 | Listener retry (database down)              | 1s x2, capped at 30s, never skipped (D-016)                         |
 | Reconciler poll interval / claim batch size | 2s / 20                                                             |
+| Reconciler workers per pod / database pool  | 5 / 10 connections, the Hikari default (D-003)                      |
 | Backoff                                     | 2s x 2 per attempt, capped at 60s, +-20 % jitter                    |
 | Max attempts                                | 10 (~5 min of waiting)                                              |
 | Label timeout (abandoned label request)     | 5 min                                                               |
@@ -267,6 +270,12 @@ packed_order_item (
 - **Orphan rows**: an alert on `ROW_COMPLETED` records still `RECEIVED` after a cutoff with no
   `ORDER_COMPLETED` for their order, a count like the backlog gauge. It never happens in the real flow,
   but nothing surfaces it today (§12).
+- **Carrier circuit breaker**: the original system has one; it is left out here for simplicity. The
+  backoff is per order, so during a carrier outage the waiting orders still add up to a steady call
+  rate, and with a non-idempotent carrier every `5xx` or timeout is an order for a person to check
+  (`LABEL_OUTCOME_UNKNOWN`). An open breaker would skip the call: a call never sent creates no label,
+  so it maps onto `REFUSED` (back to `WAITING` with backoff) with no new state. `UNKNOWN` and
+  connection failures would count, `REJECTED` would not (the carrier is healthy, the order is not).
 
 ## 11. Main trade-offs (what we chose and what it costs)
 
@@ -280,21 +289,21 @@ packed_order_item (
 
 ## 12. Failure modes
 
-| What fails                                 | When                                        | What happens                                                                                                               | Invariant kept            |
-|--------------------------------------------|---------------------------------------------|----------------------------------------------------------------------------------------------------------------------------|---------------------------|
-| Pod crashes                                | Before the inbox commit                     | Kafka redelivers; inserted normally                                                                                        | I4                        |
-| Pod crashes                                | After the commit, before the ack            | Kafka redelivers; `inbox_event_id_unique` ignores it                                                                       | I3, I4                    |
-| "Order completed" arrives first               | Any time                                    | `WAITING`; completes on a later cycle once row 4 lands                                                                   | I1                        |
-| Row re-sent with a new `eventId`         | Any time                                    | `inbox_order_row_unique` ignores it                                                                                      | I3                        |
-| Two reconcilers                            | Same cycle                                  | `SKIP LOCKED`: each claims different orders                                                                                | I2                        |
-| Carrier unavailable (no connection, `429`) | During the call                             | Back to `WAITING`, retried with backoff for as long as it lasts; `refused` counter                                         | I2                        |
-| Carrier times out or answers `5xx`         | During the call                             | `FAILED` (`LABEL_OUTCOME_UNKNOWN`) + alert at once; never called again automatically                                       | I2, I5                    |
-| Pod crashes mid-call                       | After `LABEL_REQUESTED`, before the outcome | After the label timeout, the reconciler fails it: `FAILED` (`LABEL_OUTCOME_UNKNOWN`) + alert                               | I2, I5                    |
-| PostgreSQL down right after a `201`        | Recording the label                         | `ERROR` log with the order id and the label id; after the label timeout the reconciler fails it as `LABEL_OUTCOME_UNKNOWN` | I2, I5                    |
-| A row never arrives                      | -                                           | After max attempts, `FAILED` (`MISSING_ROWS`) + alert                                                                   | I5                        |
-| "Order completed" never arrives               | -                                           | Its rows stay `RECEIVED`: only `ORDER_COMPLETED` records are claimed, so nothing fails and nothing alerts (§10)            | -                         |
-| Invalid record                             | On receive                                  | Logged with its position, counted and skipped; offset committed. Still in Kafka while the topic retains it                 | -                         |
-| PostgreSQL down                            | Any time                                    | Listener retries without acknowledging, Kafka keeps the records; reconciler pauses; readiness `DOWN`                       | I4                        |
+| What fails                                 | When                                        | What happens                                                                                                               | Invariant kept |
+|--------------------------------------------|---------------------------------------------|----------------------------------------------------------------------------------------------------------------------------|----------------|
+| Pod crashes                                | Before the inbox commit                     | Kafka redelivers; inserted normally                                                                                        | I4             |
+| Pod crashes                                | After the commit, before the ack            | Kafka redelivers; `inbox_event_id_unique` ignores it                                                                       | I3, I4         |
+| "Order completed" arrives first            | Any time                                    | `WAITING`; completes on a later cycle once row 4 lands                                                                     | I1             |
+| Row re-sent with a new `eventId`           | Any time                                    | `inbox_order_row_unique` ignores it                                                                                        | I3             |
+| Two reconcilers                            | Same cycle                                  | `SKIP LOCKED`: each claims different orders                                                                                | I2             |
+| Carrier unavailable (no connection, `429`) | During the call                             | Back to `WAITING`, retried with backoff for as long as it lasts; `refused` counter                                         | I2             |
+| Carrier times out or answers `5xx`         | During the call                             | `FAILED` (`LABEL_OUTCOME_UNKNOWN`) + alert at once; never called again automatically                                       | I2, I5         |
+| Pod crashes mid-call                       | After `LABEL_REQUESTED`, before the outcome | After the label timeout, the reconciler fails it: `FAILED` (`LABEL_OUTCOME_UNKNOWN`) + alert                               | I2, I5         |
+| PostgreSQL down right after a `201`        | Recording the label                         | `ERROR` log with the order id and the label id; after the label timeout the reconciler fails it as `LABEL_OUTCOME_UNKNOWN` | I2, I5         |
+| A row never arrives                        | -                                           | After max attempts, `FAILED` (`MISSING_ROWS`) + alert                                                                      | I5             |
+| "Order completed" never arrives            | -                                           | Its rows stay `RECEIVED`: only `ORDER_COMPLETED` records are claimed, so nothing fails and nothing alerts (§10)            | -              |
+| Invalid record                             | On receive                                  | Logged with its position, counted and skipped; offset committed. Still in Kafka while the topic retains it                 | -              |
+| PostgreSQL down                            | Any time                                    | Listener retries without acknowledging, Kafka keeps the records; reconciler pauses; readiness `DOWN`                       | I4             |
 
 ## 13. Observability
 

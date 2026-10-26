@@ -4,24 +4,24 @@ The decisions behind the original solution, which this repository replicates on 
 domain, with the options considered and the trade-offs accepted. Where this repository
 simplifies the original solution, the entry says so under **In this repository**.
 
-| ID    | Decision                                                                           |
-|-------|------------------------------------------------------------------------------------|
-| D-001 | Store every message in an inbox before processing it                               |
-| D-002 | A scheduled reconciler decides completion                                          |
-| D-003 | Reconciler concurrency with `FOR UPDATE SKIP LOCKED`                               |
+| ID    | Decision                                                                         |
+|-------|----------------------------------------------------------------------------------|
+| D-001 | Store every message in an inbox before processing it                             |
+| D-002 | A scheduled reconciler decides completion                                        |
+| D-003 | Reconciler concurrency with `FOR UPDATE SKIP LOCKED`                             |
 | D-004 | Complete = row numbers exactly `1..N`, duplicates rejected by unique constraints |
-| D-005 | The carrier is called at most once, an unknown outcome goes to a person            |
-| D-006 | Bounded wait for missing rows (exponential backoff and max attempts)            |
-| D-007 | A failed order is marked `FAILED` and alerted                                      |
-| D-008 | Invalid records are skipped at once, never retried                                 |
-| D-009 | Manual acknowledgement after the inbox commit                                      |
-| D-010 | One topic, JSON messages with a `type` attribute                                   |
-| D-011 | Packaged by feature, the carrier is the only interface                             |
-| D-012 | No business HTTP API, Actuator only                                                |
-| D-013 | Scenario tests only against real infrastructure                                    |
-| D-014 | UUIDs assigned by the application                                                  |
-| D-015 | Inbox retention and replay are out of scope                                        |
-| D-016 | Receive-path details                                                               |
+| D-005 | The carrier is called at most once, an unknown outcome goes to a person          |
+| D-006 | Bounded wait for missing rows (exponential backoff and max attempts)             |
+| D-007 | A failed order is marked `FAILED` and alerted                                    |
+| D-008 | Invalid records are skipped at once, never retried                               |
+| D-009 | Manual acknowledgement after the inbox commit                                    |
+| D-010 | One topic, JSON messages with a `type` attribute                                 |
+| D-011 | Packaged by feature, the carrier is the only interface                           |
+| D-012 | No business HTTP API, Actuator only                                              |
+| D-013 | Scenario tests only against real infrastructure                                  |
+| D-014 | UUIDs assigned by the application                                                |
+| D-015 | Inbox retention and replay are out of scope                                      |
+| D-016 | Receive-path details                                                             |
 
 ---
 
@@ -59,7 +59,8 @@ uncommitted row, so nobody completes the order, a crash right after the insert a
 
 ## D-003 - Reconciler concurrency with `FOR UPDATE SKIP LOCKED`
 
-- **Context:** the reconciler runs on every pod (up to 3), two pods must never decide the same order.
+- **Context:** the reconciler runs `workers` (5) parallel workers on every pod (up to 3), so the carrier 
+calls run in parallel. Two workers, on the same pod or not, must never decide the same order.
 - **Options:** 
   - A) `SELECT … FOR UPDATE SKIP LOCKED` on due work, in PostgreSQL. 
   - B) A distributed lock per order in Redis.
@@ -67,9 +68,10 @@ uncommitted row, so nobody completes the order, a crash right after the insert a
 marked as `LABEL_REQUESTED` is never claimed for completion again. It is claimed only once it is past 
 the label timeout, to be failed as abandoned.
 - **Trade-offs:** 
-  - pros: all pods share the work, the lock and the state live in the same database and 
+  - pros: all workers and pods share the work, the lock and the state live in the same database and 
   are committed together, a dead pod locks are released with its own connection, no new infrastructure. 
-  - cons: PostgreSQL native SQL, the claim transaction must stay short, without HTTP inside it.
+  - cons: PostgreSQL native SQL, the claim transaction must stay short, without HTTP inside it, and the 
+  database pool must cover the workers and the listener threads (5 + 3 fit the default 10).
 - **Why not B:** one more system to run and keep available, and the lock lives apart from the data, with 
 the risk of having stale data during concurrent processing between pods.
 
